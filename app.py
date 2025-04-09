@@ -1,82 +1,98 @@
-import streamlit as st
+mport streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
+import requests
 from scipy.stats import poisson
+from datetime import date
 
-st.set_page_config(page_title="Value Bet Fútbol", layout="wide")
-st.title("⚽ Sistema de Value Bets - Modelo Poisson")
+# Configuración de la app
+st.set_page_config(page_title="Value Bets Reales - API-Football", layout="wide")
+st.title("📊 Sistema Value Bets con Partidos Reales (Poisson + API-Football)")
 
-# Cuotas simuladas
-df_cuotas_mock = pd.DataFrame([
-    {"Fecha": "2025-04-09", "Equipo 1": "Barcelona", "Equipo 2": "Real Madrid", "Cuota Real 1": 2.3},
-    {"Fecha": "2025-04-09", "Equipo 1": "River Plate", "Equipo 2": "Boca Juniors", "Cuota Real 1": 2.0},
-    {"Fecha": "2025-04-09", "Equipo 1": "Manchester City", "Equipo 2": "Arsenal", "Cuota Real 1": 1.9},
-    {"Fecha": "2025-04-09", "Equipo 1": "América de Cali", "Equipo 2": "Millonarios", "Cuota Real 1": 2.1},
-    {"Fecha": "2025-04-09", "Equipo 1": "Flamengo", "Equipo 2": "Palmeiras", "Cuota Real 1": 2.2}
-])
+# API Key
+api_key = "c6e72749d66c97b26c4a7e880e8b98ee"
+headers = {"x-apisports-key": api_key}
 
-# Simulación de partidos analizados
-df_poisson = pd.DataFrame([
-    {"Fecha": "2025-04-09", "Local": "Barcelona", "Visitante": "Real Madrid", "Prob. Local": 0.58},
-    {"Fecha": "2025-04-09", "Local": "River Plate", "Visitante": "Boca Juniors", "Prob. Local": 0.62},
-    {"Fecha": "2025-04-09", "Local": "Manchester City", "Visitante": "Arsenal", "Prob. Local": 0.55},
-    {"Fecha": "2025-04-09", "Local": "América de Cali", "Visitante": "Millonarios", "Prob. Local": 0.51},
-    {"Fecha": "2025-04-09", "Local": "Flamengo", "Visitante": "Palmeiras", "Prob. Local": 0.57}
-])
+# Obtener partidos del día
+def obtener_partidos_hoy():
+    hoy = date.today().strftime("%Y-%m-%d")
+    url = f"https://v3.football.api-sports.io/fixtures?date={hoy}"
+    res = requests.get(url, headers=headers)
+    return res.json().get("response", [])
 
-# Emparejar con cuotas simuladas
-def emparejar_con_cuotas(df_partidos, df_cuotas):
-    df = df_partidos.copy()
-    df["Cuota Real"] = 2.1
-    for i, row in df.iterrows():
-        for _, cuota in df_cuotas.iterrows():
-            if (
-                row["Local"].lower() in cuota["Equipo 1"].lower()
-                and row["Visitante"].lower() in cuota["Equipo 2"].lower()
-                and row["Fecha"] == cuota["Fecha"]
-            ):
-                df.at[i, "Cuota Real"] = cuota["Cuota Real 1"]
-    df["Value Bet Real"] = (df["Prob. Local"] * df["Cuota Real"]) - 1
-    df["¿Apostar?"] = df["Value Bet Real"].apply(lambda x: "✅ Sí" if x > 0 else "❌ No")
-    return df
+# Promedio de goles en últimos 5 partidos
+def goles_promedio(team_id, tipo="home"):
+    url = f"https://v3.football.api-sports.io/fixtures?team={team_id}&last=5"
+    res = requests.get(url, headers=headers)
+    data = res.json()
+    goles = []
+    for match in data.get("response", []):
+        if tipo == "home" and match["teams"]["home"]["id"] == team_id:
+            goles.append(match["goals"]["home"])
+        elif tipo == "away" and match["teams"]["away"]["id"] == team_id:
+            goles.append(match["goals"]["away"])
+    return sum(goles)/len(goles) if goles else 1.0
 
-df_resultado = emparejar_con_cuotas(df_poisson, df_cuotas_mock)
+# Modelo Poisson
+def calcular_poisson_prob(home_avg_goals, away_avg_goals, max_goals=5):
+    home_win_prob = 0
+    draw_prob = 0
+    away_win_prob = 0
+    for home_goals in range(0, max_goals + 1):
+        for away_goals in range(0, max_goals + 1):
+            p = poisson.pmf(home_goals, home_avg_goals) * poisson.pmf(away_goals, away_avg_goals)
+            if home_goals > away_goals:
+                home_win_prob += p
+            elif home_goals == away_goals:
+                draw_prob += p
+            else:
+                away_win_prob += p
+    return round(home_win_prob, 3), round(draw_prob, 3), round(away_win_prob, 3)
 
-# 🔢 MÉTRICAS RÁPIDAS
-st.metric("📈 Total analizados", len(df_resultado))
-st.metric("🎯 Apuestas con valor", df_resultado[df_resultado["¿Apostar?"] == "✅ Sí"].shape[0])
+# Análisis completo
+def analizar_partidos():
+    partidos = obtener_partidos_hoy()
+    lista = []
+    for match in partidos:
+        fecha = match["fixture"]["date"][:10]
+        equipo_local = match["teams"]["home"]["name"]
+        equipo_visitante = match["teams"]["away"]["name"]
+        id_local = match["teams"]["home"]["id"]
+        id_visitante = match["teams"]["away"]["id"]
 
-# 📊 GRAFICO DE BARRAS - Value Bet
-st.subheader("🔍 Gráfico de Value Bets por partido")
-fig, ax = plt.subplots()
-ax.barh(
-    df_resultado["Local"] + " vs " + df_resultado["Visitante"],
-    df_resultado["Value Bet Real"],
-    color="green"
-)
-ax.set_xlabel("Value Bet")
-ax.set_title("Valor estimado por apuesta")
-st.pyplot(fig)
+        # Calcular promedios
+        avg_local = goles_promedio(id_local, "home")
+        avg_visit = goles_promedio(id_visitante, "away")
 
-# 📉 GRAFICO DE DISPERSIÓN - Prob. vs Cuota
-st.subheader("📌 Relación entre Probabilidad y Cuota")
-fig2, ax2 = plt.subplots()
-ax2.scatter(df_resultado["Prob. Local"], df_resultado["Cuota Real"], color="blue")
-ax2.set_xlabel("Probabilidad Estimada")
-ax2.set_ylabel("Cuota Real")
-ax2.set_title("Probabilidad vs Cuota (Identificar value bets)")
-st.pyplot(fig2)
+        # Probabilidades
+        prob_local, prob_empate, prob_visit = calcular_poisson_prob(avg_local, avg_visit)
 
-# 📋 TABLA DE RESULTADOS
-st.subheader("📋 Resultados del análisis")
-st.dataframe(df_resultado.style.highlight_max(axis=0, subset=["Value Bet Real"], color="lightgreen"))
+        cuota_simulada = 2.1
+        value = (prob_local * cuota_simulada) - 1
+        apostar = "✅ Sí" if value > 0 else "❌ No"
 
-# 🎯 Apuestas recomendadas
-st.subheader("🎯 Apuestas recomendadas")
-st.dataframe(df_resultado[df_resultado["¿Apostar?"] == "✅ Sí"])
+        lista.append({
+            "Fecha": fecha,
+            "Local": equipo_local,
+            "Visitante": equipo_visitante,
+            "Goles Prom Local": round(avg_local, 2),
+            "Goles Prom Visitante": round(avg_visit, 2),
+            "Prob. Local": prob_local,
+            "Prob. Empate": prob_empate,
+            "Prob. Visitante": prob_visit,
+            "Cuota Local": cuota_simulada,
+            "Value Bet": round(value, 2),
+            "¿Apostar?": apostar
+        })
+    return pd.DataFrame(lista)
 
-st.dataframe(df_resultado.style.highlight_max(axis=0, subset=["Value Bet Real"], color="lightgreen"))
+# Ejecutar análisis
+st.info("Obteniendo partidos reales del día desde API-Football...")
+df = analizar_partidos()
 
-# Filtro apuestas recomendadas
-st.subheader("🎯 Apuestas recomendadas")
-st.dataframe(df_resultado[df_resultado["¿Apostar?"] == "✅ Sí"])
+# Mostrar resultados
+st.subheader("📋 Resultados del Análisis Real")
+st.dataframe(df)
+
+# Mostrar solo apuestas recomendadas
+st.subheader("🎯 Apuestas Recomendadas (Value Bet > 0)")
+st.dataframe(df[df["¿Apostar?"] == "✅ Sí"])

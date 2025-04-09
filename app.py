@@ -1,8 +1,7 @@
-
 import streamlit as st
 import pandas as pd
+import matplotlib.pyplot as plt
 from scipy.stats import poisson
-from datetime import date
 
 st.set_page_config(page_title="Value Bet Fútbol", layout="wide")
 st.title("⚽ Sistema de Value Bets - Modelo Poisson")
@@ -25,7 +24,7 @@ df_poisson = pd.DataFrame([
     {"Fecha": "2025-04-09", "Local": "Flamengo", "Visitante": "Palmeiras", "Prob. Local": 0.57}
 ])
 
-# Emparejamos y calculamos value bet real
+# Emparejar con cuotas simuladas
 def emparejar_con_cuotas(df_partidos, df_cuotas):
     df = df_partidos.copy()
     df["Cuota Real"] = 2.1
@@ -43,8 +42,39 @@ def emparejar_con_cuotas(df_partidos, df_cuotas):
 
 df_resultado = emparejar_con_cuotas(df_poisson, df_cuotas_mock)
 
-# Mostrar tabla
+# 🔢 MÉTRICAS RÁPIDAS
+st.metric("📈 Total analizados", len(df_resultado))
+st.metric("🎯 Apuestas con valor", df_resultado[df_resultado["¿Apostar?"] == "✅ Sí"].shape[0])
+
+# 📊 GRAFICO DE BARRAS - Value Bet
+st.subheader("🔍 Gráfico de Value Bets por partido")
+fig, ax = plt.subplots()
+ax.barh(
+    df_resultado["Local"] + " vs " + df_resultado["Visitante"],
+    df_resultado["Value Bet Real"],
+    color="green"
+)
+ax.set_xlabel("Value Bet")
+ax.set_title("Valor estimado por apuesta")
+st.pyplot(fig)
+
+# 📉 GRAFICO DE DISPERSIÓN - Prob. vs Cuota
+st.subheader("📌 Relación entre Probabilidad y Cuota")
+fig2, ax2 = plt.subplots()
+ax2.scatter(df_resultado["Prob. Local"], df_resultado["Cuota Real"], color="blue")
+ax2.set_xlabel("Probabilidad Estimada")
+ax2.set_ylabel("Cuota Real")
+ax2.set_title("Probabilidad vs Cuota (Identificar value bets)")
+st.pyplot(fig2)
+
+# 📋 TABLA DE RESULTADOS
 st.subheader("📋 Resultados del análisis")
+st.dataframe(df_resultado.style.highlight_max(axis=0, subset=["Value Bet Real"], color="lightgreen"))
+
+# 🎯 Apuestas recomendadas
+st.subheader("🎯 Apuestas recomendadas")
+st.dataframe(df_resultado[df_resultado["¿Apostar?"] == "✅ Sí"])
+
 st.dataframe(df_resultado.style.highlight_max(axis=0, subset=["Value Bet Real"], color="lightgreen"))
 
 # Filtro apuestas recomendadas
